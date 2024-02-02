@@ -71,7 +71,6 @@ function process_csv_data() {
 
 	// Get the CSV data from the textarea
 	$table_name = sanitize_textarea_field( $_POST['table_name'] );
-	$table_name = 'wp_leafletmapsmarker_markers';
 	$separator  = sanitize_textarea_field( $_POST['separator'] );
 	$drop_table  = sanitize_textarea_field( $_POST['drop_table'] );
 	$skip_first  = isset( $_POST['skip_first'] );
