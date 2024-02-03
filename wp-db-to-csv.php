@@ -64,17 +64,23 @@ download('" . htmlspecialchars($main_table_name, ENT_QUOTES) . ".csv', '" . base
 	return true;
 }
 
+function createConfirmationScript($message) {
+	echo '<script>if (!confirm("'.$message.'")) {  window.location.reload()}</script>';
+}
+
+
 // Function to process CSV data and update the database
 function process_csv_data() {
 
-	global $wpdb;
+	global /** @var $wpdb */
+	$wpdb;
 
 	// Get the CSV data from the textarea
 	$table_name = sanitize_textarea_field( $_POST['table_name'] );
 	$separator  = sanitize_textarea_field( $_POST['separator'] );
-	$drop_table  = sanitize_textarea_field( $_POST['drop_table'] );
+	$drop_table  = isset( $_POST['drop_table'] );
 	$skip_first  = isset( $_POST['skip_first'] );
-	$csv_data   = stripslashes( $_POST['csv_data'] ); // Use stripslashes to unescape the data
+	$csv_data   = stripslashes( $_POST['csv_data'] );
 
 	// Replace <br> tags with newline character
 	$csv_data = html_entity_decode( $csv_data );
@@ -95,6 +101,7 @@ function process_csv_data() {
 
 	// Truncate the table before inserting new data
 	if ($drop_table){
+		createConfirmationScript("We are going to drop the table $table_name. Do you want to continue?");
 		$wpdb->query( "TRUNCATE TABLE $table_name" );
 	}
 
@@ -111,27 +118,23 @@ function process_csv_data() {
 		$field_values = array_map( function ( $value, $index ) use ( $wpdb, $columns_info ) {
 			$column_type = strtolower( $columns_info[ $index ]['Type'] );
 
-			// Handle datetime format for columns that are datetime type
-			if ( strpos( $column_type, 'datetime' ) !== false ) {
-				$value = ! empty( $value ) ? date( 'Y-m-d H:i:s', strtotime( $value ) ) : null;
-
-				return $wpdb->prepare( '%s', $value );
-			} elseif ( strpos( $column_type, 'int' ) !== false ) {
+			if ( strpos( $column_type, 'int' ) !== false ) {
 				// Handle numeric values
 				$value = floatval( $value );
-
 				return $wpdb->prepare( '%d', $value );
-			} elseif ( strpos( $column_type, 'float' ) !== false || strpos( $column_type, 'decimal' ) !== false ) {
+			} elseif ( strpos( $column_type, 'float' ) !== false ) {
 				// Handle numeric values
 				$value = floatval( $value );
 
 				return $wpdb->prepare( '%f', $value );
-			} else {
-				// Handle string values
-				$value = trim( $value );
 			}
 
-			return $wpdb->prepare( '%s', esc_sql( $value ) );
+			// Handle datetime format for columns that are datetime type
+			if ( strpos( $column_type, 'datetime' ) !== false ) {
+				$value = ! empty( $value ) ? date( 'Y-m-d H:i:s', strtotime( $value ) ) : date( 'Y-m-d H:i:s' );
+			}
+
+			return $wpdb->prepare( '%s', $value );
 		}, $csv_values, array_keys( $csv_values ) );
 
 		// Combine field names and values into a string
@@ -140,16 +143,26 @@ function process_csv_data() {
 
 		if ( count( $columns ) !== count( $field_values ) ) {
 			echo '<p>Columns do not match</p>';
-			echo '<p>Columns: ' . print_r( $columns, true ) . '</p>';
-			echo '<p>Values: ' . print_r( $field_values, true ) . '</p>';
-			echo '<p>SQL: ' . print_r( "INSERT INTO $table_name ($fields) VALUES ($values) ON DUPLICATE KEY UPDATE $fields", true ) . '</p>';
+			echo sprintf( "<p>Columns: %scount%s</p>", print_r( $columns, true ), count( $columns ) );
+			echo sprintf( "<p>Values: %scount%s</p>", print_r( $field_values, true ), count( $field_values ) );
 			break;
 		} else {
-			// Add the data to the table or replace it if it already exists
-			$wpdb->query( "
-				INSERT INTO $table_name ($fields)
-				VALUES ($values)
-			" );
+			// Construct the ON DUPLICATE KEY UPDATE part of the query
+			$on_duplicate_key_update = implode(', ', array_map(function ($column) use ($wpdb) {
+				// Skip the id column in the ON DUPLICATE KEY UPDATE clause
+				if ($column === 'id') {
+					return '';
+				}
+				return "$column = VALUES($column)";
+			}, $columns));
+
+			$on_duplicate_key_update = trim($on_duplicate_key_update, ', ');
+
+			$wpdb->query("
+                INSERT INTO $table_name ($fields)
+                VALUES ($values)
+                ON DUPLICATE KEY UPDATE $on_duplicate_key_update
+            ");
 		}
 	}
 
@@ -170,6 +183,7 @@ add_action( 'admin_menu', 'csv_update_plugin_menu' );
 function csv_update_plugin_page() {
 	// get the list of tables
 	global $wpdb;
+	$table_name = sanitize_textarea_field( $_POST['table_name'] );
 
 	// Get the list of tables
 	$tables = $wpdb->get_results( "SHOW TABLES", ARRAY_N );
@@ -177,7 +191,8 @@ function csv_update_plugin_page() {
 	// build a select box with the list of tables
 	$select = '<select name="table_name">';
 	foreach ( $tables as $table ) {
-		$select .= '<option value="' . $table[0] . '">' . $table[0] . '</option>';
+		$selected = $table === $table_name ? 'selected' : '';
+		$select .= sprintf( '<option value="%s" %s>%s</option>', $table[0], $selected, $table[0] );
 	}
 	$select .= '</select>';
 
@@ -186,21 +201,34 @@ function csv_update_plugin_page() {
 		<h2>CSV Update Plugin</h2>
 
 		<form method="post" action="" style="display: flex; flex-direction: column; gap: .5rem; max-width: 600px">
-			Table Name (without prefix)
-			<?php echo $select; ?>
-			<label for="drop_table">
-			Drop Table on Update <input name="drop_table" checked type="checkbox"/>
+			<div style="display: flex; margin-bottom: 1rem">
+				<label for="table_name" >
+					Table Name (without prefix)
+					<?php echo $select; ?>
+				</label>
+				<input type="submit" name="download" value="download" />
+			</div>
+
+			<div style="display: flex; gap: 1rem;align-items: center;">
+				<label for="drop_table">
+					Drop Table on Update <input name="drop_table" checked type="checkbox"/>
+				</label>
+
+				<label for="skip_first">
+					Skip the first row <input name="skip_first" type="checkbox"/>
+				</label>
+
+				<label>
+					CSV Separator
+					<input name="separator" value="," type="text" style="width: 40px"/>
+				</label>
+			</div>
+
+			<label for="csv_data">
+				Paste here the CSV Data, double-check the table to replace and press upload:
 			</label>
-			<label for="skip_first">
-			Skip the first row <input name="skip_first" type="checkbox"/>
-			</label>
-			</label>
-			CSV Separator
-			<input name="separator" value="," type="text"/>
-			</label>
-			<label for="csv_data">Enter CSV Data:</label>
 			<textarea name="csv_data" rows="5" cols="40"></textarea>
-			<input type="submit" name="download" value="download" />
+
 			<input type="submit" name="submit_csv" class="button-primary" value="Update Database">
 		</form>
 	</div>
