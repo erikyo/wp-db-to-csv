@@ -211,7 +211,7 @@ function csv_update_plugin_page() {
 
 			<div style="display: flex; gap: 1rem;align-items: center;">
 				<label for="drop_table">
-					Drop Table on Update <input name="drop_table" checked type="checkbox"/>
+					Drop Table on Update <input name="drop_table" type="checkbox"/>
 				</label>
 
 				<label for="skip_first">
