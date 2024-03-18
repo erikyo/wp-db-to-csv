@@ -7,6 +7,11 @@ License: GPLv2 or later
 Author: Erik Golinelli <erik@codekraft.it>
 */
 
+// Exit if accessed directly
+if ( ! defined( 'ABSPATH' ) ) {
+  exit;
+}
+
 function download_csv($main_table_name) {
 	global $wpdb;
 	/** @var array $outfile download the CSV file of the table */
